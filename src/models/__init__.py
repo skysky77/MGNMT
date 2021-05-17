@@ -15,6 +15,8 @@ from .dl4mt import DL4MT
 from .transformer import Transformer
 from .rnnlm import RNNLM
 from .mgnmt import MirrorGNMT
+from .dualnmt import DualNMT
+from .dualkdnmt import DualKDNMT
 
 __all__ = [
     "build_model",
@@ -24,14 +26,18 @@ MODEL_CLS = {
     "Transformer": Transformer,
     "DL4MT": DL4MT,
     "rnnlm": RNNLM,
-    "MGNMT": MirrorGNMT
+    "MGNMT": MirrorGNMT,
+    "DualNMT": DualNMT,
+    "DualKDNMT": DualKDNMT,
 }
 
 
 def build_model(model: str, **kwargs):
     if model not in MODEL_CLS:
         raise ValueError(
-            "Invalid model class \'{}\' provided. Only {} are supported now.".format(
-                model, list(MODEL_CLS.keys())))
+            "Invalid model class '{}' provided. Only {} are supported now.".format(
+                model, list(MODEL_CLS.keys())
+            )
+        )
 
     return MODEL_CLS[model](**kwargs)

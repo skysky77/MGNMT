@@ -1,5 +1,5 @@
-# -*- coding: UTF-8 -*- 
-# 
+# -*- coding: UTF-8 -*-
+#
 # MIT License
 #
 # Copyright (c) 2018 the xnmt authors.
@@ -23,7 +23,7 @@
 # SOFTWARE.
 #
 #       author: Zaixiang Zheng
-#       contact: zhengzx@nlp.nju.edu.cn 
+#       contact: zhengzx@nlp.nju.edu.cn
 #           or zhengzx.142857@gmail.com
 #
 
@@ -53,25 +53,29 @@ class RNNLM(nn.Module):
 
         # Use PAD
         if embed is not None:
-            self.embed = embed 
+            self.embed = embed
         else:
-            self.embed = Embeddings(num_embeddings=n_words,
-                                    embedding_dim=input_size,
-                                    dropout=dropout,
-                                    add_position_embedding=False)
+            self.embed = Embeddings(
+                num_embeddings=n_words,
+                embedding_dim=input_size,
+                dropout=dropout,
+                add_position_embedding=False,
+            )
 
-        self.gru = RNN(type="gru", batch_first=True,
-                        input_size=input_size,
-                        hidden_size=hidden_size,
-                        bidirectional=False)
+        self.gru = RNN(
+            type="gru",
+            batch_first=True,
+            input_size=input_size,
+            hidden_size=hidden_size,
+            bidirectional=False,
+        )
 
-        self.linear_logit = nn.Linear(hidden_size+input_size, input_size)
+        self.linear_logit = nn.Linear(hidden_size + input_size, input_size)
 
         self.dropout = nn.Dropout(dropout)
         self.generator = Generator(
-            n_words, input_size,
-            padding_idx=PAD,
-            shared_weight=self.embed.embeddings.weight)
+            n_words, input_size, padding_idx=PAD, shared_weight=self.embed.embeddings.weight
+        )
 
     def forward(self, seq, emb=None, hidden=None):
         seq_mask = seq.detach().eq(PAD)
@@ -87,8 +91,7 @@ class RNNLM(nn.Module):
         #     if hidden is None and emb.dim() > 2:  # training and eval
         #         hidden = self.linear_init(z)
 
-        hidden, _ = self.gru(emb, seq_mask,
-                             h_0=hidden.unsqueeze(0) if hidden is not None else None)
+        hidden, _ = self.gru(emb, seq_mask, h_0=hidden.unsqueeze(0) if hidden is not None else None)
 
         logits = F.tanh(self.linear_logit(torch.cat([hidden, emb], -1)))
         logits = self.dropout(logits)
@@ -118,7 +121,7 @@ class RNNLM(nn.Module):
 
         assert hasattr(self, "latent")
         latent = self.latent
-        
+
         if expand_size > 1:
             dec_init = tile_batch(dec_init, expand_size)
             latent = tile_batch(latent, multiplier=expand_size)
@@ -126,16 +129,14 @@ class RNNLM(nn.Module):
         return {"dec_hiddens": dec_init, "latent": latent}
 
     def decode(self, seq, dec_states, emb=None, log_probs=True):
-        dec_hiddens = dec_states['dec_hiddens']
+        dec_hiddens = dec_states["dec_hiddens"]
         latent = dec_states["latent"]
 
         final_word_indices = seq[:, -1:].contiguous()
         if emb is None:
             emb = self.forward_embedding(final_word_indices, latent)
 
-        new_dec_states = self.forward(final_word_indices,
-                                      emb=emb,
-                                      hidden=dec_hiddens)
+        new_dec_states = self.forward(final_word_indices, emb=emb, hidden=dec_hiddens)
 
         scores = new_dec_states["logprob"].squeeze(1)
         next_hiddens = new_dec_states["hidden"].squeeze(1)
@@ -148,23 +149,24 @@ class RNNLM(nn.Module):
         dec_hiddens = dec_states["dec_hiddens"]
         batch_size = dec_hiddens.size(0) // beam_size
 
-        dec_hiddens = tensor_gather_helper(gather_indices=new_beam_indices,
-                                           gather_from=dec_hiddens,
-                                           batch_size=batch_size,
-                                           beam_size=beam_size,
-                                           gather_shape=[batch_size * beam_size, -1])
+        dec_hiddens = tensor_gather_helper(
+            gather_indices=new_beam_indices,
+            gather_from=dec_hiddens,
+            batch_size=batch_size,
+            beam_size=beam_size,
+            gather_shape=[batch_size * beam_size, -1],
+        )
 
-        dec_states['dec_hiddens'] = dec_hiddens
+        dec_states["dec_hiddens"] = dec_hiddens
 
         return dec_states
-
 
     def forward_embedding(self, seq, latent, add_pos=True):
         emb = self.embed(seq)
         if add_pos:
-            emb = self.pos_embed(emb) 
+            emb = self.pos_embed(emb)
 
         # concat embeddings with latent and do a linear transformation.
         _latent = latent.unsqueeze(1).repeat(1, emb.size(1), 1)
-        var_emb = self.var_inp_map(torch.cat([emb, _latent], -1)) 
+        var_emb = self.var_inp_map(torch.cat([emb, _latent], -1))
         return var_emb

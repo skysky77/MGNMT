@@ -15,7 +15,6 @@ def sort_batch(seq_len):
 
 
 class RNN(nn.Module):
-
     def __init__(self, type, batch_first=False, **kwargs):
 
         super().__init__()

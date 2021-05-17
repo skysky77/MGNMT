@@ -43,9 +43,7 @@ from src.utils.tensor_ops import reduce_tensors_through_batch_dim
 from src.utils.vae_utils import wd_anneal_function, kl_anneal_function, unk_replace
 from src.models.transformer_new import Transformer
 from src.models.rnnlm_new import RNNLM
-from src.modules.variational_inferrer import InteractiveRNNInferrer
-from src.modules.variational_inferrer import RNNInferrer as RNNInferrer
-from src.modules.variational_inferrer2 import RNNInferrer as RNNInferrer2
+from src.modules.variational_inferrer2 import RNNInferrer
 from src.modules.criterions import NMTCriterion
 from src.modules.embeddings import Embeddings
 from src.modules.position_embedding import PositionalEmbedding
@@ -55,7 +53,7 @@ def change(m):
     return {"src": "tgt", "tgt": "src"}
 
 
-class MirrorGNMT(nn.Module):
+class DualNMT(nn.Module):
     def __init__(self, args):
         super().__init__()
 
@@ -147,15 +145,19 @@ class MirrorGNMT(nn.Module):
         self.LMs["tgt"].pos_embed = self.pos_embed
 
     def _build_inference_model(self, args):
-        # TODO: fix embedding
-        self.inferrer = RNNInferrer(
+        self.src_inferer = RNNInferrer(
             args.n_src_vocab,
+            args.d_word_vec,
+            args.d_model,
+            args.latent_size,
+            embed=self.embeds["tgt"],
+        )
+        self.tgt_inferer = RNNInferrer(
             args.n_tgt_vocab,
             args.d_word_vec,
             args.d_model,
             args.latent_size,
-            src_embed=self.embeds["src"],
-            tgt_embed=self.embeds["tgt"],
+            embed=self.embeds["src"],
         )
 
         self.var_inp_maps = nn.ModuleDict(
@@ -181,11 +183,11 @@ class MirrorGNMT(nn.Module):
 
     def forward_inference_model(self, src, tgt, is_sampling=True, src_lang="src"):
         # src_emb, tgt_emb = self.embeds["src"](src), self.embeds["tgt"](tgt)
-        if src_lang == "tgt":
-            src, tgt = tgt, src
-
-        inferred = self.inferrer(
-            src, tgt, is_sampling=is_sampling, stop_grad_input=self.args.inferrer_stop_grad_input
+        srcinferred = self.src_inferer(
+            src, is_sampling=is_sampling, stop_grad_input=self.args.inferrer_stop_grad_input
+        )
+        tgtinferred = self.tgt_inferer(
+            tgt, is_sampling=is_sampling, stop_grad_input=self.args.inferrer_stop_grad_input
         )
 
         # concat embeddings with latent and do a linear transformation.
@@ -194,9 +196,12 @@ class MirrorGNMT(nn.Module):
         # var_tgt_emb = self.var_inp_maps["tgt"](torch.cat([tgt_emb, latent], -1))
 
         return {
-            "mean": inferred["mean"],
-            "logv": inferred["logv"],
-            "latent": inferred["latent"],
+            "srcmean": srcinferred["mean"],
+            "srclogv": srcinferred["logv"],
+            "srclatent": srcinferred["latent"],
+            "tgtmean": tgtinferred["mean"],
+            "tgtlogv": tgtinferred["logv"],
+            "tgtlatent": tgtinferred["latent"],
             # "var_src_emb": var_src_emb,
             # "var_tgt_emb": var_tgt_emb
         }
@@ -257,15 +262,16 @@ class MirrorGNMT(nn.Module):
     def forward_all(self, src, tgt):
         # 1. inference model
         inferred = self.forward_inference_model(src, tgt, self.training)
-        latent = inferred.pop("latent")
+        srclatent = inferred.pop("srclatent")
+        tgtlatent = inferred.pop("tgtlatent")
 
         # 2. embedding
         # UNK dropout
         src_dropped = self.prepare_word_dropout(src)
         tgt_dropped = self.prepare_word_dropout(tgt)
 
-        src_emb = self.forward_embedding(src_dropped, latent, lang="src", add_pos=True)
-        tgt_emb = self.forward_embedding(tgt_dropped, latent, lang="tgt", add_pos=True)
+        src_emb = self.forward_embedding(src_dropped, srclatent, lang="src", add_pos=True)
+        tgt_emb = self.forward_embedding(tgt_dropped, tgtlatent, lang="tgt", add_pos=True)
 
         src_inp, tgt_inp = src_dropped[:, :-1].contiguous(), tgt_dropped[:, :-1].contiguous()
         src_inp_emb, tgt_inp_emb = src_emb[:, :-1].contiguous(), tgt_emb[:, :-1].contiguous()
@@ -289,6 +295,72 @@ class MirrorGNMT(nn.Module):
 
         return {"logprobs": logprobs, "inferred": inferred}
 
+    def forward_selfkd(self, src, tgt):
+        import torch
+
+        # 1. inference model
+        inferred = self.forward_inference_model(src, tgt, self.training)
+        srclatent = inferred.pop("srclatent")
+        tgtlatent = inferred.pop("tgtlatent")
+
+        # 2. embedding
+        # UNK dropout
+        src_dropped = self.prepare_word_dropout(src)
+        tgt_dropped = self.prepare_word_dropout(tgt)
+
+        with torch.no_grad():
+            src_emb = self.forward_embedding(src_dropped, srclatent, lang="src", add_pos=True)
+            tgt_emb = self.forward_embedding(tgt_dropped, tgtlatent, lang="tgt", add_pos=True)
+
+            src_inp, tgt_inp = src_dropped[:, :-1].contiguous(), tgt_dropped[:, :-1].contiguous()
+            src_inp_emb, tgt_inp_emb = src_emb[:, :-1].contiguous(), tgt_emb[:, :-1].contiguous()
+
+            # 3. logprobs of LMs and TMs
+            tea_logprobs = {}
+
+            tea_logprobs["src"] = self.forward_language_model(
+                self.LMs["src"], src_inp, src_inp_emb
+            )["logprob"]
+            tea_logprobs["tgt"] = self.forward_language_model(
+                self.LMs["tgt"], tgt_inp, tgt_inp_emb
+            )["logprob"]
+
+            tea_logprobs["src2tgt"] = self.forward_translation_model(
+                self.TMs["src2tgt"], src, tgt_inp, src_emb, tgt_inp_emb
+            )["logprob"]
+            tea_logprobs["tgt2src"] = self.forward_translation_model(
+                self.TMs["tgt2src"], tgt, src_inp, tgt_emb, src_inp_emb
+            )["logprob"]
+
+        # selfkd
+        src_tgt_emb = self.forward_embedding(src_dropped, tgtlatent, lang="src", add_pos=True)
+        tgt_src_emb = self.forward_embedding(tgt_dropped, srclatent, lang="tgt", add_pos=True)
+
+        src_inp, tgt_inp = src_dropped[:, :-1].contiguous(), tgt_dropped[:, :-1].contiguous()
+        src_tgt_inp_emb, tgt_src_inp_emb = (
+            src_tgt_emb[:, :-1].contiguous(),
+            tgt_src_emb[:, :-1].contiguous(),
+        )
+
+        # 3. logprobs of LMs and TMs
+        logprobs = {}
+
+        logprobs["src2"] = self.forward_language_model(self.LMs["src"], src_inp, src_tgt_inp_emb)[
+            "logprob"
+        ]
+        logprobs["tgt2"] = self.forward_language_model(self.LMs["tgt"], tgt_inp, tgt_src_inp_emb)[
+            "logprob"
+        ]
+
+        logprobs["src2tgt2"] = self.forward_translation_model(
+            self.TMs["src2tgt"], src, tgt_inp, src_tgt_emb, tgt_src_inp_emb
+        )["logprob"]
+        logprobs["tgt2src2"] = self.forward_translation_model(
+            self.TMs["tgt2src"], tgt, src_inp, tgt_src_emb, src_tgt_inp_emb
+        )["logprob"]
+
+        return {"logprobs": logprobs, "tea_logprobs": tea_logprobs, "inferred": inferred}
+
     def forward_partial(self, src_, tgt, src_lang="src", tgt_lang="tgt"):
         LM_name, TM_name = tgt_lang, "{}2{}".format(src_lang, tgt_lang)
         tgt_LM = self.LMs[tgt_lang]
@@ -296,16 +368,17 @@ class MirrorGNMT(nn.Module):
 
         # 1. inference model
         inferred = self.forward_inference_model(src_, tgt, self.training, src_lang=src_lang)
-        latent = inferred.pop("latent")
+        srclatent = inferred.pop("srclatent")
+        tgtlatent = inferred.pop("tgtlatent")
 
         # 2. embedding
         # UNK dropout
         src_dropped = self.prepare_word_dropout(src_)
-        src_emb = self.forward_embedding(src_dropped, latent, lang=src_lang, add_pos=True)
+        src_emb = self.forward_embedding(src_dropped, srclatent, lang=src_lang, add_pos=True)
 
         tgt_dropped = self.prepare_word_dropout(tgt)
         tgt_inp = tgt_dropped[:, :-1].contiguous()
-        tgt_inp_emb = self.forward_embedding(tgt_inp, latent, lang=tgt_lang, add_pos=True)
+        tgt_inp_emb = self.forward_embedding(tgt_inp, tgtlatent, lang=tgt_lang, add_pos=True)
         # 3. logprobs of LMs and TMs
         logprobs = {}
 
@@ -335,12 +408,48 @@ class MirrorGNMT(nn.Module):
         nll_losses["total_nll"] = 0.5 * sum(nll_losses.values())
 
         # 2. KL loss
-        kl_losses = self.compute_kl_loss(inferred["mean"], inferred["logv"], step=step)
+        # src_kl_losses = self.compute_kl_loss(inferred["srcmean"], inferred["srclogv"], step=step,)
+        # tgt_kl_losses = self.compute_kl_loss(inferred["tgtmean"], inferred["tgtlogv"], step=step,)
+        kl_losses = self.compute_kl_loss2(
+            inferred["srcmean"],
+            inferred["srclogv"],
+            inferred["tgtmean"],
+            inferred["tgtlogv"],
+            step=step,
+        )
 
-        ELBO = kl_losses["kl_loss"] + nll_losses["total_nll"]
-        final_loss = kl_losses["kl_term"] + nll_losses["total_nll"]
+        ELBO = (
+            # src_kl_losses["kl_loss"]
+            # + tgt_kl_losses["kl_loss"]
+            kl_losses["kl_loss"]
+            + nll_losses["total_nll"]
+        )
+        final_loss = (
+            # src_kl_losses["kl_term"]
+            # + tgt_kl_losses["kl_term"]
+            kl_losses["kl_term"]
+            + nll_losses["total_nll"]
+        )
 
         return {"Loss": final_loss, "ELBO": ELBO, **nll_losses, **kl_losses}
+
+    def compute_selfkd_loss(self, src, tgt, step):
+        model_ret = self.forward_selfkd(src, tgt)
+        logprobs = model_ret["logprobs"]
+        tea_logprobs = model_ret["tea_logprobs"]
+
+        kd_losses = {}
+        kd_losses["srclmkd_loss"] = self.compute_kl_loss3(logprobs["src2"], tea_logprobs["src"])
+        kd_losses["tgtlmkd_loss"] = self.compute_kl_loss3(logprobs["tgt2"], tea_logprobs["tgt"])
+        kd_losses["src2tgttm_loss"] = self.compute_kl_loss3(
+            logprobs["src2tgt2"], tea_logprobs["src2tgt"]
+        )
+        kd_losses["tgt2srctm_loss"] = self.compute_kl_loss3(
+            logprobs["tgt2src2"], tea_logprobs["tgt2src"]
+        )
+        kd_losses["kd_total"] = sum(kd_losses.values())
+
+        return kd_losses
 
     def compute_loss_partial(self, src_, tgt, step, src_lang="src", tgt_lang="tgt"):
         LM_name, TM_name = tgt_lang, "{}2{}".format(src_lang, tgt_lang)
@@ -360,7 +469,13 @@ class MirrorGNMT(nn.Module):
         nll_losses["total_nll"] = sum(nll_losses.values())
 
         # 2. KL loss
-        kl_losses = self.compute_kl_loss(inferred["mean"], inferred["logv"], step=step)
+        kl_losses = self.compute_kl_loss2(
+            inferred["srcmean"],
+            inferred["srclogv"],
+            inferred["tgtmean"],
+            inferred["tgtlogv"],
+            step=step,
+        )
 
         ELBO = kl_losses["kl_loss"] + nll_losses["total_nll"]
         final_loss = kl_losses["kl_term"] + nll_losses["total_nll"]
@@ -380,6 +495,28 @@ class MirrorGNMT(nn.Module):
         self.kl_weight = kl_weight * self.args.kl_factor
 
         kl_loss = -0.5 * torch.sum(1 + logv - mean.pow(2) - logv.exp())
+        kl_loss = kl_loss / normalization
+
+        kl_item = kl_loss * self.kl_weight
+        return {"kl_loss": kl_loss, "kl_term": kl_item}
+
+    def compute_kl_loss2(self, mean1, logv1, mean2, logv2, step, normalization=1):
+        kl_weight = self.get_kl_weight(step)
+        self.kl_weight = kl_weight * self.args.kl_factor
+
+        kl_loss = -0.5 * torch.sum(
+            logv1 - logv2 - ((logv1.exp() + (mean1 - mean2).pow(2)) / logv2.exp()) + 1
+        )
+        kl_loss = kl_loss / normalization
+
+        kl_item = kl_loss * self.kl_weight
+        return {"kl_loss": kl_loss, "kl_term": kl_item}
+
+    def compute_kl_loss3(self, logp1, logp2, step, normalization=1):
+        kl_weight = self.get_kl_weight(step)
+        self.kl_weight = kl_weight * self.args.kl_factor
+
+        kl_loss = torch.sum(logp1.exp() * logp1 - logp2.exp() * logp2)
         kl_loss = kl_loss / normalization
 
         kl_item = kl_loss * self.kl_weight

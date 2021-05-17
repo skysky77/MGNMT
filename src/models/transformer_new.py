@@ -35,14 +35,14 @@ from src.utils import nest
 
 
 def get_attn_causal_mask(seq):
-    ''' Get an attention mask to avoid using the subsequent info.
+    """ Get an attention mask to avoid using the subsequent info.
 
     :param seq: Input sequence.
         with shape [batch_size, time_steps, dim]
-    '''
+    """
     assert seq.dim() == 3
     attn_shape = (seq.size(0), seq.size(1), seq.size(1))
-    subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+    subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype("uint8")
     subsequent_mask = torch.from_numpy(subsequent_mask)
     if seq.is_cuda:
         subsequent_mask = subsequent_mask.cuda()
@@ -50,16 +50,18 @@ def get_attn_causal_mask(seq):
 
 
 class EncoderBlock(nn.Module):
-
     def __init__(self, d_model, d_inner_hid, n_head, dim_per_head, dropout=0.1):
         super(EncoderBlock, self).__init__()
 
         self.layer_norm = nn.LayerNorm(d_model)
 
-        self.slf_attn = MultiHeadedAttention(head_count=n_head, model_dim=d_model, dropout=dropout,
-                                             dim_per_head=dim_per_head)
+        self.slf_attn = MultiHeadedAttention(
+            head_count=n_head, model_dim=d_model, dropout=dropout, dim_per_head=dim_per_head
+        )
 
-        self.pos_ffn = PositionwiseFeedForward(size=d_model, hidden_size=d_inner_hid, dropout=dropout)
+        self.pos_ffn = PositionwiseFeedForward(
+            size=d_model, hidden_size=d_inner_hid, dropout=dropout
+        )
 
         self.dropout = nn.Dropout(dropout)
 
@@ -72,18 +74,32 @@ class EncoderBlock(nn.Module):
 
 
 class Encoder(nn.Module):
-
     def __init__(
-            self, n_layers=6, n_head=8,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dropout=0.1, dim_per_head=None):
+        self,
+        n_layers=6,
+        n_head=8,
+        d_word_vec=512,
+        d_model=512,
+        d_inner_hid=1024,
+        dropout=0.1,
+        dim_per_head=None,
+    ):
         super().__init__()
 
         self.num_layers = n_layers
-        
+
         self.block_stack = nn.ModuleList(
-            [EncoderBlock(d_model=d_model, d_inner_hid=d_inner_hid, n_head=n_head, dropout=dropout,
-                          dim_per_head=dim_per_head)
-             for _ in range(n_layers)])
+            [
+                EncoderBlock(
+                    d_model=d_model,
+                    d_inner_hid=d_inner_hid,
+                    n_head=n_head,
+                    dropout=dropout,
+                    dim_per_head=dim_per_head,
+                )
+                for _ in range(n_layers)
+            ]
+        )
 
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -102,15 +118,17 @@ class Encoder(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    ''' Compose with three layers '''
+    """ Compose with three layers """
 
     def __init__(self, d_model, d_inner_hid, n_head, dim_per_head, dropout=0.1):
         super(DecoderBlock, self).__init__()
 
-        self.slf_attn = MultiHeadedAttention(head_count=n_head, model_dim=d_model, dropout=dropout,
-                                             dim_per_head=dim_per_head)
-        self.ctx_attn = MultiHeadedAttention(head_count=n_head, model_dim=d_model, dropout=dropout,
-                                             dim_per_head=dim_per_head)
+        self.slf_attn = MultiHeadedAttention(
+            head_count=n_head, model_dim=d_model, dropout=dropout, dim_per_head=dim_per_head
+        )
+        self.ctx_attn = MultiHeadedAttention(
+            head_count=n_head, model_dim=d_model, dropout=dropout, dim_per_head=dim_per_head
+        )
         self.pos_ffn = PositionwiseFeedForward(size=d_model, hidden_size=d_inner_hid)
 
         self.layer_norm_1 = nn.LayerNorm(d_model)
@@ -121,8 +139,15 @@ class DecoderBlock(nn.Module):
     def compute_cache(self, enc_output):
         return self.ctx_attn.compute_cache(enc_output, enc_output)
 
-    def forward(self, dec_input, enc_output, slf_attn_mask=None, dec_enc_attn_mask=None,
-                enc_attn_cache=None, self_attn_cache=None):
+    def forward(
+        self,
+        dec_input,
+        enc_output,
+        slf_attn_mask=None,
+        dec_enc_attn_mask=None,
+        enc_attn_cache=None,
+        self_attn_cache=None,
+    ):
         # Args Checks
         input_batch, input_len, _ = dec_input.size()
 
@@ -131,14 +156,20 @@ class DecoderBlock(nn.Module):
         input_norm = self.layer_norm_1(dec_input)
         all_input = input_norm
 
-        query, _, self_attn_cache = self.slf_attn(all_input, all_input, input_norm,
-                                                  mask=slf_attn_mask, self_attn_cache=self_attn_cache)
+        query, _, self_attn_cache = self.slf_attn(
+            all_input, all_input, input_norm, mask=slf_attn_mask, self_attn_cache=self_attn_cache
+        )
 
         query = self.dropout(query) + dec_input
 
         query_norm = self.layer_norm_2(query)
-        mid, attn, enc_attn_cache = self.ctx_attn(enc_output, enc_output, query_norm,
-                                                  mask=dec_enc_attn_mask, enc_attn_cache=enc_attn_cache)
+        mid, attn, enc_attn_cache = self.ctx_attn(
+            enc_output,
+            enc_output,
+            query_norm,
+            mask=dec_enc_attn_mask,
+            enc_attn_cache=enc_attn_cache,
+        )
 
         output = self.pos_ffn(self.dropout(mid) + query)
 
@@ -146,11 +177,18 @@ class DecoderBlock(nn.Module):
 
 
 class Decoder(nn.Module):
-    ''' A decoder model with self attention mechanism. '''
+    """ A decoder model with self attention mechanism. """
 
     def __init__(
-            self, n_layers=6, n_head=8,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dim_per_head=None, dropout=0.1):
+        self,
+        n_layers=6,
+        n_head=8,
+        d_word_vec=512,
+        d_model=512,
+        d_inner_hid=1024,
+        dim_per_head=None,
+        dropout=0.1,
+    ):
 
         super(Decoder, self).__init__()
 
@@ -158,10 +196,18 @@ class Decoder(nn.Module):
         self.num_layers = n_layers
         self.d_model = d_model
 
-        self.block_stack = nn.ModuleList([
-            DecoderBlock(d_model=d_model, d_inner_hid=d_inner_hid, n_head=n_head, dropout=dropout,
-                         dim_per_head=dim_per_head)
-            for _ in range(n_layers)])
+        self.block_stack = nn.ModuleList(
+            [
+                DecoderBlock(
+                    d_model=d_model,
+                    d_inner_hid=d_inner_hid,
+                    n_head=n_head,
+                    dropout=dropout,
+                    dim_per_head=dim_per_head,
+                )
+                for _ in range(n_layers)
+            ]
+        )
 
         self.out_layer_norm = nn.LayerNorm(d_model)
 
@@ -174,7 +220,9 @@ class Decoder(nn.Module):
         else:
             return self._dim_per_head
 
-    def forward(self, tgt_emb, tgt_mask, enc_output, src_mask, enc_attn_caches=None, self_attn_caches=None):
+    def forward(
+        self, tgt_emb, tgt_mask, enc_output, src_mask, enc_attn_caches=None, self_attn_caches=None
+    ):
 
         (batch_size, tgt_len), src_len = tgt_mask.size(), src_mask.size(1)
 
@@ -194,22 +242,23 @@ class Decoder(nn.Module):
 
         try:
             dec_slf_attn_mask = dec_slf_attn_pad_mask + dec_slf_attn_sub_mask.bool()
-        except:
+        except Exception():
             dec_slf_attn_mask = torch.gt(dec_slf_attn_pad_mask + dec_slf_attn_sub_mask, 0)
-            
+
         dec_enc_attn_mask = src_mask.unsqueeze(1).expand(batch_size, query_len, src_len)
 
         output = tgt_emb
         new_self_attn_caches = []
         new_enc_attn_caches = []
         for i in range(self.num_layers):
-            output, attn, self_attn_cache, enc_attn_cache \
-                = self.block_stack[i](output,
-                                      enc_output,
-                                      dec_slf_attn_mask,
-                                      dec_enc_attn_mask,
-                                      enc_attn_cache=enc_attn_caches[i] if enc_attn_caches is not None else None,
-                                      self_attn_cache=self_attn_caches[i] if self_attn_caches is not None else None)
+            output, attn, self_attn_cache, enc_attn_cache = self.block_stack[i](
+                output,
+                enc_output,
+                dec_slf_attn_mask,
+                dec_enc_attn_mask,
+                enc_attn_cache=enc_attn_caches[i] if enc_attn_caches is not None else None,
+                self_attn_cache=self_attn_caches[i] if self_attn_caches is not None else None,
+            )
 
             new_self_attn_caches += [self_attn_cache]
             new_enc_attn_caches += [enc_attn_cache]
@@ -241,7 +290,7 @@ class Generator(nn.Module):
             x_2d = x.view(-1, x.size(-1))
 
             mask = x_2d.new(1, x_2d.size(-1)).zero_()
-            mask[0][self.padding_idx] = float('-inf')
+            mask[0][self.padding_idx] = float("-inf")
             x_2d = x_2d + mask
 
             return x_2d.view(x_size)
@@ -262,73 +311,116 @@ class Generator(nn.Module):
 
 
 class Transformer(NMTModel):
-    ''' A sequence to sequence model with attention mechanism. '''
+    """ A sequence to sequence model with attention mechanism. """
 
     def __init__(
-            self, n_src_vocab, n_tgt_vocab, src_embed=None, tgt_embed=None,
-            n_layers=6, n_head=8,
-            d_word_vec=512, d_model=512, d_inner_hid=1024, dim_per_head=None,
-            dropout=0.1, tie_input_output_embedding=True, tie_source_target_embedding=False, **kwargs):
+        self,
+        n_src_vocab,
+        n_tgt_vocab,
+        src_embed=None,
+        tgt_embed=None,
+        n_layers=6,
+        n_head=8,
+        d_word_vec=512,
+        d_model=512,
+        d_inner_hid=1024,
+        dim_per_head=None,
+        dropout=0.1,
+        tie_input_output_embedding=True,
+        tie_source_target_embedding=False,
+        **kwargs
+    ):
 
         super(Transformer, self).__init__()
 
-        self._build_embeddings(n_src_vocab, n_tgt_vocab, 
-                               src_embed=src_embed, tgt_embed=tgt_embed,
-                               d_word_vec=d_word_vec, dropout=dropout)
+        self._build_embeddings(
+            n_src_vocab,
+            n_tgt_vocab,
+            src_embed=src_embed,
+            tgt_embed=tgt_embed,
+            d_word_vec=d_word_vec,
+            dropout=dropout,
+        )
 
         self.encoder = Encoder(
-            n_layers=n_layers, n_head=n_head,
-            d_word_vec=d_word_vec, d_model=d_model,
-            d_inner_hid=d_inner_hid, dropout=dropout, dim_per_head=dim_per_head)
+            n_layers=n_layers,
+            n_head=n_head,
+            d_word_vec=d_word_vec,
+            d_model=d_model,
+            d_inner_hid=d_inner_hid,
+            dropout=dropout,
+            dim_per_head=dim_per_head,
+        )
 
         self.decoder = Decoder(
-            n_layers=n_layers, n_head=n_head,
-            d_word_vec=d_word_vec, d_model=d_model,
-            d_inner_hid=d_inner_hid, dropout=dropout, dim_per_head=dim_per_head)
+            n_layers=n_layers,
+            n_head=n_head,
+            d_word_vec=d_word_vec,
+            d_model=d_model,
+            d_inner_hid=d_inner_hid,
+            dropout=dropout,
+            dim_per_head=dim_per_head,
+        )
 
         self.dropout = nn.Dropout(dropout)
 
-        assert d_model == d_word_vec, \
-            'To facilitate the residual connections, \
-             the dimensions of all module output shall be the same.'
+        assert (
+            d_model == d_word_vec
+        ), "To facilitate the residual connections, \
+             the dimensions of all module output shall be the same."
 
         if tie_source_target_embedding:
-            assert n_src_vocab == n_tgt_vocab, \
-                "source and target vocabulary should have equal size when tying source&target embedding"
+            assert (
+                n_src_vocab == n_tgt_vocab
+            ), "source and target vocabulary should have equal size when tying source&target embedding"
             self.src_embed.embeddings.weight = self.tgt_embed.embeddings.weight
 
         if tie_input_output_embedding:
-            self.generator = Generator(n_words=n_tgt_vocab,
-                                       hidden_size=d_word_vec,
-                                       shared_weight=self.tgt_embed.embeddings.weight,
-                                       padding_idx=PAD)
+            self.generator = Generator(
+                n_words=n_tgt_vocab,
+                hidden_size=d_word_vec,
+                shared_weight=self.tgt_embed.embeddings.weight,
+                padding_idx=PAD,
+            )
 
         else:
             self.generator = Generator(n_words=n_tgt_vocab, hidden_size=d_word_vec, padding_idx=PAD)
 
-    def _build_embeddings(self, n_src_vocab, n_tgt_vocab, 
-                          src_embed=None, tgt_embed=None,
-                          d_word_vec=512, dropout=0.1):
-       self.src_embed = Embeddings(num_embeddings=n_src_vocab,
-                                   embedding_dim=d_word_vec,
-                                   dropout=dropout,
-                                   add_position_embedding=True) \
-           if src_embed is None else src_embed
-       self.tgt_embed = Embeddings(num_embeddings=n_tgt_vocab,
-                                   embedding_dim=d_word_vec,
-                                   dropout=dropout,
-                                   add_position_embedding=True) \
-           if tgt_embed is None else tgt_embed
+    def _build_embeddings(
+        self, n_src_vocab, n_tgt_vocab, src_embed=None, tgt_embed=None, d_word_vec=512, dropout=0.1
+    ):
+        self.src_embed = (
+            Embeddings(
+                num_embeddings=n_src_vocab,
+                embedding_dim=d_word_vec,
+                dropout=dropout,
+                add_position_embedding=True,
+            )
+            if src_embed is None
+            else src_embed
+        )
+        self.tgt_embed = (
+            Embeddings(
+                num_embeddings=n_tgt_vocab,
+                embedding_dim=d_word_vec,
+                dropout=dropout,
+                add_position_embedding=True,
+            )
+            if tgt_embed is None
+            else tgt_embed
+        )
 
-    def forward(self, src_seq, tgt_seq, src_emb=None, tgt_emb=None,log_probs=True):
+    def forward(self, src_seq, tgt_seq, src_emb=None, tgt_emb=None, log_probs=True):
         if src_emb is None:
             src_emb = self.src_embed(src_seq)
         if tgt_emb is None:
             tgt_emb = self.tgt_embed(tgt_seq)
-        src_mask, tgt_mask = src_seq.eq(PAD), tgt_seq.eq(PAD) 
+        src_mask, tgt_mask = src_seq.eq(PAD), tgt_seq.eq(PAD)
 
         enc_output = self.encoder(src_emb, src_mask=src_mask)
-        dec_output, _, _ = self.decoder(tgt_emb, tgt_mask=tgt_mask, enc_output=enc_output, src_mask=src_mask)
+        dec_output, _, _ = self.decoder(
+            tgt_emb, tgt_mask=tgt_mask, enc_output=enc_output, src_mask=src_mask
+        )
 
         return self.generator(dec_output, log_probs=log_probs)
 
@@ -337,7 +429,7 @@ class Transformer(NMTModel):
         if src_emb is None:
             # src_emb = self.src_embed(src_seq)
             src_emb = self.forward_embedding(src_seq, self.latent, lang="src")
-        src_mask = src_seq.eq(PAD) 
+        src_mask = src_seq.eq(PAD)
 
         ctx = self.encoder(src_emb, src_mask=src_mask)
 
@@ -345,10 +437,10 @@ class Transformer(NMTModel):
 
     def init_decoder(self, enc_outputs, expand_size=1):
 
-        ctx = enc_outputs['ctx']
+        ctx = enc_outputs["ctx"]
 
-        ctx_mask = enc_outputs['ctx_mask']
-        
+        ctx_mask = enc_outputs["ctx_mask"]
+
         assert hasattr(self, "latent")
         latent = self.latent
 
@@ -362,40 +454,43 @@ class Transformer(NMTModel):
             "ctx_mask": ctx_mask,
             "enc_attn_caches": None,
             "slf_attn_caches": None,
-            "latent": latent
+            "latent": latent,
         }
 
     def decode(self, tgt_seq, dec_states, tgt_emb=None, log_probs=True):
         ctx = dec_states["ctx"]
-        ctx_mask = dec_states['ctx_mask']
-        enc_attn_caches = dec_states['enc_attn_caches']
-        slf_attn_caches = dec_states['slf_attn_caches']
+        ctx_mask = dec_states["ctx_mask"]
+        enc_attn_caches = dec_states["enc_attn_caches"]
+        slf_attn_caches = dec_states["slf_attn_caches"]
 
         latent = dec_states["latent"]
-        
+
         # assert hasattr(self, "latent")
         if tgt_emb is None:
             # tgt_emb = self.tgt_embed(tgt_seq)
             tgt_emb = self.forward_embedding(tgt_seq, latent, lang="tgt")
-        
+
         tgt_mask = tgt_seq.eq(PAD)
 
         dec_output, slf_attn_caches, enc_attn_caches = self.decoder(
-            tgt_emb=tgt_emb, tgt_mask=tgt_mask,
-            enc_output=ctx, src_mask=ctx_mask,
+            tgt_emb=tgt_emb,
+            tgt_mask=tgt_mask,
+            enc_output=ctx,
+            src_mask=ctx_mask,
             enc_attn_caches=enc_attn_caches,
-            self_attn_caches=slf_attn_caches)
+            self_attn_caches=slf_attn_caches,
+        )
 
         next_scores = self.generator(dec_output[:, -1].contiguous(), log_probs=log_probs)
 
-        dec_states['enc_attn_caches'] = enc_attn_caches
-        dec_states['slf_attn_caches'] = slf_attn_caches
+        dec_states["enc_attn_caches"] = enc_attn_caches
+        dec_states["slf_attn_caches"] = slf_attn_caches
 
         return next_scores, dec_states
 
     def reorder_dec_states(self, dec_states, new_beam_indices, beam_size):
 
-        slf_attn_caches = dec_states['slf_attn_caches']
+        slf_attn_caches = dec_states["slf_attn_caches"]
 
         batch_size = slf_attn_caches[0][0].size(0) // beam_size
 
@@ -403,14 +498,17 @@ class Transformer(NMTModel):
         dim_per_head = self.decoder.dim_per_head
 
         slf_attn_caches = nest.map_structure(
-            lambda t: tensor_gather_helper(gather_indices=new_beam_indices,
-                                           gather_from=t,
-                                           batch_size=batch_size,
-                                           beam_size=beam_size,
-                                           gather_shape=[batch_size * beam_size, n_head, -1, dim_per_head]),
-            slf_attn_caches)
+            lambda t: tensor_gather_helper(
+                gather_indices=new_beam_indices,
+                gather_from=t,
+                batch_size=batch_size,
+                beam_size=beam_size,
+                gather_shape=[batch_size * beam_size, n_head, -1, dim_per_head],
+            ),
+            slf_attn_caches,
+        )
 
-        dec_states['slf_attn_caches'] = slf_attn_caches
+        dec_states["slf_attn_caches"] = slf_attn_caches
 
         return dec_states
 
@@ -421,9 +519,8 @@ class Transformer(NMTModel):
             emb = self.tgt_embed(seq)
         if add_pos:
             emb = self.pos_embed(emb)
-        
+
         # concat embeddings with latent and do a linear transformation.
         _latent = latent.unsqueeze(1).repeat(1, emb.size(1), 1)
-        var_emb = self.var_inp_maps[lang](
-            torch.cat([emb, _latent], -1)) 
+        var_emb = self.var_inp_maps[lang](torch.cat([emb, _latent], -1))
         return var_emb

@@ -1,5 +1,5 @@
-# -*- coding: UTF-8 -*- 
-# 
+# -*- coding: UTF-8 -*-
+#
 # MIT License
 #
 # Copyright (c) 2018 the xnmt authors.
@@ -23,7 +23,7 @@
 # SOFTWARE.
 #
 #       author: Zaixiang Zheng
-#       contact: zhengzx@nlp.nju.edu.cn 
+#       contact: zhengzx@nlp.nju.edu.cn
 #           or zhengzx.142857@gmail.com
 #
 
@@ -41,8 +41,16 @@ from src.modules.sublayers import MultiHeadedAttention
 
 
 class _VariationalInferrer(nn.Module):
-    def __init__(self, n_src_vocab, n_tgt_vocab, d_word_vec, d_model,
-                 d_latent, src_embed=None, tgt_embed=None):
+    def __init__(
+        self,
+        n_src_vocab,
+        n_tgt_vocab,
+        d_word_vec,
+        d_model,
+        d_latent,
+        src_embed=None,
+        tgt_embed=None,
+    ):
         super().__init__()
 
         self.n_src_vocab = n_src_vocab
@@ -51,16 +59,12 @@ class _VariationalInferrer(nn.Module):
         self.d_model = d_model
         self.d_latent = d_latent
 
-        self.src_embed = Embeddings(num_embeddings=n_src_vocab,
-                                    embedding_dim=d_word_vec)
-        self.tgt_embed = Embeddings(num_embeddings=n_tgt_vocab,
-                                    embedding_dim=d_word_vec)
+        self.src_embed = Embeddings(num_embeddings=n_src_vocab, embedding_dim=d_word_vec)
+        self.tgt_embed = Embeddings(num_embeddings=n_tgt_vocab, embedding_dim=d_word_vec)
         if src_embed is not None:
-            self.src_embed.embeddings.weight = \
-                src_embed.embeddings.weight
+            self.src_embed.embeddings.weight = src_embed.embeddings.weight
         if tgt_embed is not None:
-            self.tgt_embed.embeddings.weight = \
-                tgt_embed.embeddings.weight
+            self.tgt_embed.embeddings.weight = tgt_embed.embeddings.weight
 
         self.infer_latent2mean = nn.Linear(d_model * 4, d_latent)
         self.infer_latent2logv = nn.Linear(d_model * 4, d_latent)
@@ -85,11 +89,7 @@ class _VariationalInferrer(nn.Module):
         else:
             z = mean
 
-        return {
-            "mean": mean,
-            "logv": logv,
-            "latent": z
-        }
+        return {"mean": mean, "logv": logv, "latent": z}
 
     def encode(self, x, y, stop_grad_emb=True):
         raise NotImplementedError
@@ -99,23 +99,29 @@ class _VariationalInferrer(nn.Module):
 
 
 class RNNInferrer(_VariationalInferrer):
-    def __init__(self, n_src_vocab, n_tgt_vocab, d_word_vec, d_model, d_latent,
-                 src_embed=None, tgt_embed=None):
-        super().__init__(n_src_vocab, n_tgt_vocab, d_word_vec, d_model, d_latent,
-                         src_embed, tgt_embed)
+    def __init__(
+        self,
+        n_src_vocab,
+        n_tgt_vocab,
+        d_word_vec,
+        d_model,
+        d_latent,
+        src_embed=None,
+        tgt_embed=None,
+    ):
+        super().__init__(
+            n_src_vocab, n_tgt_vocab, d_word_vec, d_model, d_latent, src_embed, tgt_embed
+        )
 
-        self.infer_enc_x = RNNEncoder(
-            n_src_vocab, d_word_vec, d_model, embeddings=self.src_embed)
-        self.infer_enc_y = RNNEncoder(
-            n_tgt_vocab, d_word_vec, d_model, embeddings=self.tgt_embed)
+        self.infer_enc_x = RNNEncoder(n_src_vocab, d_word_vec, d_model, embeddings=self.src_embed)
+        self.infer_enc_y = RNNEncoder(n_tgt_vocab, d_word_vec, d_model, embeddings=self.tgt_embed)
         # self.infer_enc_x.embeddings = self.src_embed
         # self.infer_enc_y.embeddings = self.tgt_embed
 
     @staticmethod
     def _pool(_h, _m):
         _no_pad_mask = 1.0 - _m.float()
-        _ctx_mean = (_h * _no_pad_mask.unsqueeze(2)).sum(1) / \
-                    _no_pad_mask.unsqueeze(2).sum(1)
+        _ctx_mean = (_h * _no_pad_mask.unsqueeze(2)).sum(1) / _no_pad_mask.unsqueeze(2).sum(1)
         return _ctx_mean
 
     def encode(self, x, y, stop_grad_input=True):
@@ -126,33 +132,42 @@ class RNNInferrer(_VariationalInferrer):
         enc_x, x_mask = self.infer_enc_x(x, x_emb)
         enc_y, y_mask = self.infer_enc_y(y, y_emb)
 
-        bilingual_inf = torch.cat([self._pool(enc_x, x_mask),
-                                   self._pool(enc_y, y_mask)], -1)
+        bilingual_inf = torch.cat([self._pool(enc_x, x_mask), self._pool(enc_y, y_mask)], -1)
         return bilingual_inf
 
     def share_parameters(self, reverse_inferrer: _VariationalInferrer, swap=True):
         self.should_swap = swap
-        self.src_embed, self.tgt_embed = \
-            reverse_inferrer.src_embed, reverse_inferrer.tgt_embed
-        self.infer_enc_x, self.infer_enc_y = \
-            reverse_inferrer.infer_enc_x, reverse_inferrer.infer_enc_y
-        self.infer_latent2mean, self.infer_latent2logv = \
-            reverse_inferrer.infer_latent2mean, reverse_inferrer.infer_latent2logv
+        self.src_embed, self.tgt_embed = reverse_inferrer.src_embed, reverse_inferrer.tgt_embed
+        self.infer_enc_x, self.infer_enc_y = (
+            reverse_inferrer.infer_enc_x,
+            reverse_inferrer.infer_enc_y,
+        )
+        self.infer_latent2mean, self.infer_latent2logv = (
+            reverse_inferrer.infer_latent2mean,
+            reverse_inferrer.infer_latent2logv,
+        )
 
 
 class InteractiveRNNInferrer(RNNInferrer):
-    def __init__(self, n_src_vocab, n_tgt_vocab,
-                 d_word_vec, d_model, d_latent,
-                 src_embed=None, tgt_embed=None):
-        super().__init__(n_src_vocab, n_tgt_vocab, d_word_vec,
-                         d_model, d_latent,
-                         src_embed, tgt_embed)
+    def __init__(
+        self,
+        n_src_vocab,
+        n_tgt_vocab,
+        d_word_vec,
+        d_model,
+        d_latent,
+        src_embed=None,
+        tgt_embed=None,
+    ):
+        super().__init__(
+            n_src_vocab, n_tgt_vocab, d_word_vec, d_model, d_latent, src_embed, tgt_embed
+        )
         # self.attn1 = MultiHeadedAttention(
         #     d_model*2, 1, dropout=0.)
         # self.attn2 = MultiHeadedAttention(
         #     d_model*2, 1, dropout=0.)
-        self.attn1 = ScaledDotProductAttention(d_model*2, 0.)
-        self.attn2 = ScaledDotProductAttention(d_model*2, 0.)
+        self.attn1 = ScaledDotProductAttention(d_model * 2, 0.0)
+        self.attn2 = ScaledDotProductAttention(d_model * 2, 0.0)
 
         self.infer_latent2mean = nn.Linear(d_model * 8, d_latent)
         self.infer_latent2logv = nn.Linear(d_model * 8, d_latent)
@@ -172,17 +187,20 @@ class InteractiveRNNInferrer(RNNInferrer):
         #     enc_x, enc_x, enc_y,
         #     mask=x_mask[:, None, :].repeat(1, enc_y.size(1), 1))
         attn_x2y, _ = self.attn1(
-            enc_x, enc_y, enc_y,
-            attn_mask=y_mask[:, None, :].repeat(1, enc_x.size(1), 1))
+            enc_x, enc_y, enc_y, attn_mask=y_mask[:, None, :].repeat(1, enc_x.size(1), 1)
+        )
         attn_y2x, _ = self.attn2(
-            enc_y, enc_x, enc_x,
-            attn_mask=x_mask[:, None, :].repeat(1, enc_y.size(1), 1))
+            enc_y, enc_x, enc_x, attn_mask=x_mask[:, None, :].repeat(1, enc_y.size(1), 1)
+        )
 
         bilingual_inf = torch.cat(
-            [self._pool(enc_x, x_mask),
-             self._pool(enc_y, y_mask),
-             self._pool(attn_x2y, x_mask),
-             self._pool(attn_y2x, y_mask)],
-            -1)
+            [
+                self._pool(enc_x, x_mask),
+                self._pool(enc_y, y_mask),
+                self._pool(attn_x2y, x_mask),
+                self._pool(attn_y2x, y_mask),
+            ],
+            -1,
+        )
 
         return bilingual_inf

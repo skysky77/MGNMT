@@ -89,8 +89,9 @@ def mirror_iterative_decoding_v2(
     alpha=0.6,
     beta=0.0,
     gamma=0.0,
+    latentf="srclatent",
 ):
-
+    assert latentf in ["srclatent", "tgtlatent", "all", "latent"]
     # prepare
     src_LM, tgt_LM = model.LMs[src_lang], model.LMs[tgt_lang]
     s2t_TM, t2s_TM = model.TMs[get_TM(src_lang, tgt_lang)], model.TMs[get_TM(tgt_lang, src_lang)]
@@ -110,7 +111,7 @@ def mirror_iterative_decoding_v2(
     for _ in range(iterations):
         # 1. infer latent
         latent_ = model.forward_inference_model(src, tgt_, is_sampling=False, src_lang=src_lang)[
-            "latent"
+            latentf
         ]
         model.set_latent(latent_)
 
@@ -141,7 +142,7 @@ def mirror_iterative_decoding_v2(
             tgt_beam = tgt_.reshape(-1, tgt_.size(-1))  # [bsz*beam, len_y]
             latent_beam = model.forward_inference_model(
                 src_beam, tgt_beam, is_sampling=False, src_lang=src_lang
-            )["latent"]
+            )[latentf]
 
             rec_score_TM = model.score_translation_model(
                 t2s_TM,

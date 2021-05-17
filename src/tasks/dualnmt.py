@@ -34,7 +34,7 @@ from tqdm import tqdm
 from src.data.data_iterator import DataIterator
 from src.data.dataset import TextLineDataset, ZipDataset
 from src.data.vocabulary import Vocabulary
-from src.decoding.iterative_decoding import mirror_iterative_decoding_v2
+from src.decoding.iterative_decoding2 import mirror_iterative_decoding_v2
 from src.metric.bleu_scorer import SacreBLEUScorer
 from src.models import build_model
 from src.optim import Optimizer

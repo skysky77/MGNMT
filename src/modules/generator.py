@@ -1,5 +1,5 @@
-# -*- coding: UTF-8 -*- 
-# 
+# -*- coding: UTF-8 -*-
+#
 # MIT License
 #
 # Copyright (c) 2018 the xnmt authors.
@@ -23,7 +23,7 @@
 # SOFTWARE.
 #
 #       author: Zaixiang Zheng
-#       contact: zhengzx@nlp.nju.edu.cn 
+#       contact: zhengzx@nlp.nju.edu.cn
 #           or zhengzx.142857@gmail.com
 #
 
@@ -39,7 +39,6 @@ import src.utils.init as my_init
 
 
 class Generator(nn.Module):
-
     def __init__(self, n_words, hidden_size, shared_weight=None, padding_idx=-1):
 
         super(Generator, self).__init__()
@@ -68,7 +67,7 @@ class Generator(nn.Module):
             x_2d = x.view(-1, x.size(-1))
 
             mask = x_2d.new(1, x_2d.size(-1)).zero_()
-            mask[0][self.padding_idx] = float('-inf')
+            mask[0][self.padding_idx] = float("-inf")
             x_2d = x_2d + mask
 
             return x_2d.view(x_size)

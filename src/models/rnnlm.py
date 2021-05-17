@@ -1,5 +1,5 @@
-# -*- coding: UTF-8 -*- 
-# 
+# -*- coding: UTF-8 -*-
+#
 # MIT License
 #
 # Copyright (c) 2018 the xnmt authors.
@@ -23,7 +23,7 @@
 # SOFTWARE.
 #
 #       author: Zaixiang Zheng
-#       contact: zhengzx@nlp.nju.edu.cn 
+#       contact: zhengzx@nlp.nju.edu.cn
 #           or zhengzx.142857@gmail.com
 #
 
@@ -52,22 +52,27 @@ class RNNLM(nn.Module):
 
         self.d_model = d_model
         # Use PAD
-        self.embeddings = Embeddings(num_embeddings=n_words,
-                                     embedding_dim=d_word_vec,
-                                     dropout=0.0,
-                                     add_position_embedding=False)
+        self.embeddings = Embeddings(
+            num_embeddings=n_words,
+            embedding_dim=d_word_vec,
+            dropout=0.0,
+            add_position_embedding=False,
+        )
 
-        self.gru = RNN(type="gru", batch_first=True, input_size=d_word_vec,
-                       hidden_size=d_model,
-                       bidirectional=False)
+        self.gru = RNN(
+            type="gru",
+            batch_first=True,
+            input_size=d_word_vec,
+            hidden_size=d_model,
+            bidirectional=False,
+        )
 
         self.linear_logit = nn.Linear(d_model + d_word_vec, d_word_vec)
 
         self.dropout = nn.Dropout(dropout)
         self.generator = Generator(
-            n_words, d_word_vec,
-            padding_idx=PAD,
-            shared_weight=self.embeddings.embeddings.weight)
+            n_words, d_word_vec, padding_idx=PAD, shared_weight=self.embeddings.embeddings.weight
+        )
 
     def forward(self, x, hidden=None):
         x_mask = x.detach().eq(PAD)
@@ -75,9 +80,7 @@ class RNNLM(nn.Module):
 
         # ctx, _ = self.gru(emb, x_mask)
 
-        ctx, _ = self.gru(emb, x_mask,
-                          h_0=hidden.unsqueeze(0)
-                            if hidden is not None else None)
+        ctx, _ = self.gru(emb, x_mask, h_0=hidden.unsqueeze(0) if hidden is not None else None)
 
         logits = F.tanh(self.linear_logit(torch.cat([ctx, emb], -1)))
         logits = self.dropout(logits)
@@ -95,12 +98,11 @@ class RNNLM(nn.Module):
         return {"dec_hiddens": dec_init}
 
     def decode(self, tgt_seq, dec_states, log_probs=True):
-        dec_hiddens = dec_states['dec_hiddens']
+        dec_hiddens = dec_states["dec_hiddens"]
 
         final_word_indices = tgt_seq[:, -1:].contiguous()
 
-        new_dec_states = self.forward(final_word_indices,
-                                      hidden=dec_hiddens)
+        new_dec_states = self.forward(final_word_indices, hidden=dec_hiddens)
 
         scores = new_dec_states["logprobs"].squeeze(1)
         next_hiddens = new_dec_states["hidden"].squeeze(1)
@@ -113,12 +115,14 @@ class RNNLM(nn.Module):
         dec_hiddens = dec_states["dec_hiddens"]
         batch_size = dec_hiddens.size(0) // beam_size
 
-        dec_hiddens = tensor_gather_helper(gather_indices=new_beam_indices,
-                                           gather_from=dec_hiddens,
-                                           batch_size=batch_size,
-                                           beam_size=beam_size,
-                                           gather_shape=[batch_size * beam_size, -1])
+        dec_hiddens = tensor_gather_helper(
+            gather_indices=new_beam_indices,
+            gather_from=dec_hiddens,
+            batch_size=batch_size,
+            beam_size=beam_size,
+            gather_shape=[batch_size * beam_size, -1],
+        )
 
-        dec_states['dec_hiddens'] = dec_hiddens
+        dec_states["dec_hiddens"] = dec_hiddens
 
         return dec_states
